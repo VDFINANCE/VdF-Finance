@@ -1161,7 +1161,7 @@
 .home-menu-toggle{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:5px;width:36px;height:36px;padding:6px;border:1px solid rgba(233,197,106,.35);border-radius:12px;background:#151519;color:#e9c56a;cursor:pointer;flex-shrink:0;}
 .home-menu-toggle span{display:block;width:18px;height:2px;border-radius:2px;background:#e9c56a;transition:.2s;}
 .home-menu-toggle:hover{background:#1d1a13;border-color:#e9c56a;}
-.clean-home-nav .clean-nav-links{display:none;position:absolute;right:0;top:64px;z-index:50;min-width:190px;padding:10px;background:#121216;border:1px solid rgba(233,197,106,.28);border-radius:14px;box-shadow:0 16px 35px rgba(0,0,0,.45);flex-direction:column;gap:7px;}
+.clean-home-nav .clean-nav-links{display:none;position:absolute;left:0;right:auto;top:64px;z-index:50;min-width:190px;padding:10px;background:#121216;border:1px solid rgba(233,197,106,.28);border-radius:14px;box-shadow:0 16px 35px rgba(0,0,0,.45);flex-direction:column;gap:7px;}
 .clean-home-nav .clean-nav-links.open{display:flex;}
 .clean-home-nav{position:relative;}
 .clean-home-nav .clean-nav-links button{width:100%;text-align:left;}
@@ -1943,6 +1943,30 @@ input:focus, select:focus, textarea:focus {
 .coin-two{left:28px;bottom:10px;transform:rotate(-16deg)}
 .coin-three{right:62px;bottom:0;transform:rotate(8deg)}
 @media(max-width:700px){.money-image{height:125px}.money-bill{width:130px;height:72px}.coin-one{right:15px}.coin-two{left:15px}}
+
+/* ================= APPLY SUCCESS POPUP ================= */
+.apply-success-popup {
+    display: none;
+    margin-top: 12px;
+    padding: 13px 16px;
+    border-radius: 10px;
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #86efac;
+    font-weight: 700;
+    line-height: 1.45;
+    text-align: center;
+    box-sizing: border-box;
+}
+.apply-success-popup.show {
+    display: block;
+    animation: vdfApplyPopupIn .2s ease-out;
+}
+@keyframes vdfApplyPopupIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 </style>
 </style>
 </head>
@@ -2157,13 +2181,19 @@ input:focus, select:focus, textarea:focus {
             </div>
 
             <div class="form-group">
+                <label>UPI ID</label>
+                <input type="text" id="appUpiId" placeholder="Enter your UPI ID">
+            </div>
+
+            <div class="form-group">
                 <label>Loan Amount</label>
                 <input
                     type="number"
                     id="appAmount"
                     min="100"
                     max="50000"
-                    value="10000"
+                    value=""
+                    placeholder="Enter loan amount"
                     oninput="calculateApplication()"
                 >
             </div>
@@ -2240,7 +2270,7 @@ input:focus, select:focus, textarea:focus {
                 Submit Application
             </button>
 
-            <div id="applyMessage" class="alert"></div>
+            <div id="applyMessage" class="apply-success-popup" role="status" aria-live="polite"></div>
 
         </div>
 
@@ -2455,6 +2485,7 @@ input:focus, select:focus, textarea:focus {
                         <th>Mobile</th>
                         <th>Co-Applicant Number</th>
                         <th>Email</th>
+                        <th>UPI ID</th>
                         <th>Reason for Apply</th>
                         <th>Address</th>
                         <th>Aadhaar Card</th>
@@ -2546,13 +2577,39 @@ input:focus, select:focus, textarea:focus {
 
 
 /* ================= HOME TIME GREETING ================= */
+function getIndiaHour() {
+    try {
+        var hourText = new Intl.DateTimeFormat("en-US", {
+            timeZone: "Asia/Kolkata",
+            hour: "2-digit",
+            hour12: false
+        }).format(new Date());
+        var hour = parseInt(hourText, 10);
+        return hour === 24 ? 0 : hour;
+    } catch (e) {
+        return new Date().getHours();
+    }
+}
+
+function getIndiaTimeGreeting() {
+    var hour = getIndiaHour();
+    if (hour >= 5 && hour < 12) return "☀️ Good Morning";
+    if (hour >= 12 && hour < 17) return "🌤️ Good Afternoon";
+    if (hour >= 17 && hour < 21) return "🌙 Good Evening";
+    return "🌙 Good Night";
+}
+
 function updateHomeGreeting() {
     var el = document.getElementById("homeTimeGreeting");
     if (!el) return;
+    el.textContent = getIndiaTimeGreeting();
+}
 
-    var hour = new Date().getHours();
-    var greeting = hour < 12 ? "☀️ Good Morning" : (hour < 17 ? "🌤️ Good Afternoon" : "🌙 Good Evening");
-    el.textContent = greeting;
+function updateStatusTimeGreeting(name) {
+    var greeting = document.getElementById("statusGreeting");
+    if (!greeting) return;
+    var cleanName = name ? escapeHTML(name) : "";
+    greeting.innerHTML = getIndiaTimeGreeting() + (cleanName ? ", " + cleanName + "! 👋 Welcome to VD Finance." : "! 👋 Welcome to VD Finance.");
 }
 
 /* ================= PAGE NAVIGATION ================= */
@@ -2572,6 +2629,32 @@ function showPage(pageId) {
     if (selectedPage) {
         selectedPage.classList.add("active");
         window.scrollTo(0, 0);
+    }
+
+    /*
+     * Apply page is a public/shared form. Every time it is opened, start
+     * with a blank customer form so the previous applicant's information
+     * cannot be displayed to the next person.
+     */
+    if (pageId === "apply") {
+        resetApplicationForm();
+        var applyPopup = document.getElementById("applyMessage");
+        if (applyPopup) {
+            applyPopup.className = "apply-success-popup";
+            applyPopup.textContent = "";
+        }
+    }
+
+    /*
+     * Status page is also shared. Do not carry an earlier applicant's ID or
+     * result into a new visit. The customer must enter the ID themselves.
+     */
+    if (pageId === "status") {
+        var statusIdField = document.getElementById("statusId");
+        var statusResult = document.getElementById("statusResult");
+        if (statusIdField) statusIdField.value = "";
+        if (statusResult) statusResult.innerHTML = "";
+        updateStatusTimeGreeting("");
     }
 
     if (pageId === "admin") {
@@ -2661,24 +2744,31 @@ function calculateApplication() {
 
     var amount = Number(document.getElementById("appAmount").value);
 
-    if (amount < 100) {
-        amount = 100;
+    if (!amount || amount < 100 || amount > 50000) {
+        var result = document.querySelector("#appAmount");
+        var principal = document.getElementById("appPrincipal");
+        var interest = document.getElementById("appInterest");
+        var fee = document.getElementById("appFee");
+        var total = document.getElementById("appTotal");
+        var repayment = document.getElementById("appRepaymentDate");
+
+        if (principal) principal.textContent = "";
+        if (interest) interest.textContent = "";
+        if (fee) fee.textContent = "";
+        if (total) total.textContent = "";
+        if (repayment) repayment.textContent = "";
+        return;
     }
 
-    if (amount > 50000) {
-        amount = 50000;
-    }
-
-    var interest = amount * 0.30;
-    var fee = 100;
-    var total = amount + interest + fee;
+    var interestAmount = amount * 0.30;
+    var feeAmount = 100;
+    var totalAmount = amount + interestAmount + feeAmount;
 
     document.getElementById("appRepaymentDate").textContent = getRepaymentDate();
-
     document.getElementById("appPrincipal").textContent = money(amount);
-    document.getElementById("appInterest").textContent = money(interest);
-    document.getElementById("appFee").textContent = money(fee);
-    document.getElementById("appTotal").textContent = money(total);
+    document.getElementById("appInterest").textContent = money(interestAmount);
+    document.getElementById("appFee").textContent = money(feeAmount);
+    document.getElementById("appTotal").textContent = money(totalAmount);
 }
 
 
@@ -2687,9 +2777,9 @@ function calculateApplication() {
 /*
   After deploying the Google Apps Script Web App, paste its /exec URL here.
   Example:
-  const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxwSiM8fBFvafudopHVZFuSe5-QJBYy5RK5H-dTz5FfFOoAyTJNkguJhGdkzurIehyrIQ/exec";
+  const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzSLA4hSxo3WC2jegUxBpqwRBRO-2KDH_puv2ZRfIQ5olfVGHDf__4cJq_27dnNqv7TQg/exec";
 */
-const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxwSiM8fBFvafudopHVZFuSe5-QJBYy5RK5H-dTz5FfFOoAyTJNkguJhGdkzurIehyrIQ/exec";
+const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzSLA4hSxo3WC2jegUxBpqwRBRO-2KDH_puv2ZRfIQ5olfVGHDf__4cJq_27dnNqv7TQg/exec";
 
 function syncToGoogleSheet(action, application) {
     if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.indexOf("PASTE_YOUR_") === 0) {
@@ -2704,6 +2794,7 @@ function syncToGoogleSheet(action, application) {
             mobile: application.mobile || "",
             coApplicant: application.coApplicant || "",
             email: application.email || "",
+            upiId: application.upiId || "",
             loanHistory: application.loanHistory || [],
             adminNote: application.adminNote || "",
             loanReason: application.loanReason || "",
@@ -2717,7 +2808,8 @@ function syncToGoogleSheet(action, application) {
             repaymentDate: application.repaymentDate || "",
             status: application.status || "",
             userAccess: application.userAccess !== false,
-            createdAt: application.createdAt || ""
+            createdAt: application.createdAt || "",
+            lastUpdated: new Date().toISOString()
         }
     };
 
@@ -2777,6 +2869,7 @@ function submitLoan() {
     var mobile = document.getElementById("appMobile").value.trim();
     var coApplicant = document.getElementById("appCoApplicant").value.trim();
     var email = document.getElementById("appEmail").value.trim();
+    var upiId = document.getElementById("appUpiId").value.trim();
     var loanReason = document.getElementById("appLoanReason").value.trim();
     var address = document.getElementById("appAddress").value.trim();
     var aadhaarFile = document.getElementById("appAadhaar").files[0];
@@ -2810,6 +2903,11 @@ function submitLoan() {
 
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         showMessage(message, "Please enter a valid email address.", "error");
+        return;
+    }
+
+    if (upiId && !/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/.test(upiId)) {
+        showMessage(message, "Please enter a valid UPI ID.", "error");
         return;
     }
 
@@ -2926,6 +3024,7 @@ function submitLoan() {
         application.mobile = mobile;
         application.coApplicant = coApplicant;
         application.email = email;
+        application.upiId = upiId;
         application.loanReason = loanReason;
         application.address = address;
         application.aadhaarFileName = aadhaarFile.name;
@@ -2948,6 +3047,7 @@ function submitLoan() {
             mobile: mobile,
             coApplicant: coApplicant,
             email: email,
+            upiId: upiId,
             loanReason: loanReason,
             address: address,
             aadhaarFileName: aadhaarFile.name,
@@ -2977,26 +3077,94 @@ function submitLoan() {
         saveLoans(loans);
         syncToGoogleSheet(existingIndex >= 0 && existingApplication ? "update" : "create", application);
 
-        showMessage(
-            message,
-            "Thank you for choosing VD Finance! Your application has been submitted successfully. Your Application ID is " +
-            application.id,
-            "success"
-        );
+        /* Send the application-received email directly through the Apps Script email API. */
+        sendApplicationReceivedEmail(application, transaction);
 
-        document.getElementById("statusId").value = application.id;
+        /*
+         * Show the Application ID once, then leave the Apply page completely
+         * clean.  Do NOT copy the submitted ID into the Status page because
+         * another person may use this same browser/device next.
+         */
+        resetApplicationForm();
 
-        document.getElementById("appName").value = "";
-        document.getElementById("appMobile").value = "";
-        document.getElementById("appCoApplicant").value = "";
-        document.getElementById("appEmail").value = "";
-        document.getElementById("appLoanReason").value = "";
-        document.getElementById("appAddress").value = "";
-        document.getElementById("appAadhaar").value = "";
-        document.getElementById("applicationAcknowledgement").checked = false;
+        /* Show confirmation only below the Submit Application button. */
+        var successPopup = document.getElementById("applyMessage");
+        if (successPopup) {
+            successPopup.textContent =
+                "Thank you for choosing VD Finance! Your application has been submitted successfully. Application ID: " + application.id;
+            successPopup.className = "apply-success-popup show";
+
+            clearTimeout(window.vdfApplyPopupTimer);
+            window.vdfApplyPopupTimer = setTimeout(function () {
+                successPopup.className = "apply-success-popup";
+                successPopup.textContent = "";
+            }, 5000);
+        }
+
+        /* Always keep the separate Status page blank for the next person. */
+        var statusIdField = document.getElementById("statusId");
+        var statusResult = document.getElementById("statusResult");
+        if (statusIdField) statusIdField.value = "";
+        if (statusResult) statusResult.innerHTML = "";
     };
 
     reader.readAsDataURL(aadhaarFile);
+}
+
+
+/* ================= RESET APPLY FORM ================= */
+
+function resetApplicationForm() {
+
+    clearTimeout(window.vdfApplyPopupTimer);
+
+    var fields = [
+        "appName",
+        "appMobile",
+        "appCoApplicant",
+        "appEmail",
+        "appUpiId",
+        "appAddress"
+    ];
+
+    fields.forEach(function(id) {
+        var field = document.getElementById(id);
+        if (field) field.value = "";
+    });
+
+    var reason = document.getElementById("appLoanReason");
+    if (reason) reason.value = "";
+
+    var aadhaar = document.getElementById("appAadhaar");
+    if (aadhaar) aadhaar.value = "";
+
+    var acknowledgement = document.getElementById("applicationAcknowledgement");
+    if (acknowledgement) acknowledgement.checked = false;
+
+    var message = document.getElementById("applyMessage");
+    if (message) {
+        message.textContent = "";
+        message.className = "apply-success-popup";
+    }
+
+    /* Reset calculated values completely so the next person sees a blank form. */
+    var amount = document.getElementById("appAmount");
+    if (amount) amount.value = "";
+
+    var period = document.getElementById("appPeriod");
+    if (period) period.value = "30";
+
+    var principal = document.getElementById("appPrincipal");
+    var interest = document.getElementById("appInterest");
+    var fee = document.getElementById("appFee");
+    var total = document.getElementById("appTotal");
+    var repayment = document.getElementById("appRepaymentDate");
+
+    if (principal) principal.textContent = "";
+    if (interest) interest.textContent = "";
+    if (fee) fee.textContent = "";
+    if (total) total.textContent = "";
+    if (repayment) repayment.textContent = "";
 }
 
 
@@ -3047,28 +3215,7 @@ function getDaysUntilDue(repaymentDate) {
 /* ================= APPLICATION STATUS ================= */
 
 function updateStatusGreeting(name) {
-
-    var greeting = document.getElementById("statusGreeting");
-    if (!greeting) return;
-
-    var hour = new Date().getHours();
-    var text;
-    var icon;
-
-    if (hour < 12) {
-        text = "Good Morning";
-        icon = "🌅";
-    } else if (hour < 17) {
-        text = "Good Afternoon";
-        icon = "☀️";
-    } else {
-        text = "Good Evening";
-        icon = "🌙";
-    }
-
-    greeting.innerHTML =
-        '<span class="status-greeting-icon">' + icon + '</span> ' +
-        text + ", " + escapeHTML(name) + "! 👋 Welcome to VD Finance.";
+    updateStatusTimeGreeting(name);
 }
 
 
@@ -3150,8 +3297,7 @@ function checkStatus() {
 
     if (!id) {
 
-        var greeting = document.getElementById("statusGreeting");
-        if (greeting) greeting.textContent = "Welcome to VD Finance! 👋";
+        updateStatusTimeGreeting("");
 
         result.innerHTML =
             '<div class="alert error">Please enter your application ID.</div>';
@@ -3463,6 +3609,7 @@ function loadAdminApplications() {
             <td>${escapeHTML(application.mobile)}</td>
             <td>${escapeHTML(application.coApplicant || "")}</td>
             <td>${escapeHTML(application.email)}</td>
+            <td>${escapeHTML(application.upiId || "")}</td>
             <td>${escapeHTML(application.loanReason)}</td>
             <td>${escapeHTML(application.address)}</td>
             <td>
@@ -3677,17 +3824,99 @@ function setAdminPopup(id) {
 
 /* ================= ADMIN EMAIL ================= */
 
-function sendAdminEmail(id) {
+function getVDFTimeGreeting() {
+    return getIndiaTimeGreeting().replace(/^\S+\s+/, "");
+}
 
+function sendVDFEmail(application, subject, message, silent) {
+    if (!application || !application.email) {
+        if (!silent) alert("Customer email address is not available.");
+        return Promise.resolve(false);
+    }
+
+    var payload = {
+        action: "sendEmail",
+        application: {
+            id: application.id || "",
+            name: application.name || "Customer",
+            email: application.email || "",
+            subject: subject || "VD Finance - Application Update",
+            message: message || "",
+            amount: Number(application.amount) || 0,
+            total: Number(application.total) || 0,
+            repaymentDate: application.repaymentDate || "",
+            status: application.status || ""
+        }
+    };
+
+    return fetch(GOOGLE_SHEET_WEB_APP_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: {"Content-Type": "text/plain;charset=utf-8"},
+        body: JSON.stringify(payload)
+    }).then(function() {
+        if (!silent) alert("Email sent to " + application.email + ".");
+        return true;
+    }).catch(function(error) {
+        console.warn("VDF email request failed:", error);
+        if (!silent) alert("Email could not be sent. Please check the Google Apps Script deployment.");
+        return false;
+    });
+}
+
+function sendApplicationReceivedEmail(application, loan) {
+    if (!application || !application.email) return;
+
+    var greeting = getVDFTimeGreeting();
+    var customerName = application.name || "Customer";
+    var subject = "VD Finance - Application Received " + (application.id || "");
+    var message =
+        greeting + " " + customerName + ",\n\n" +
+        "We have successfully received your VD Finance loan application.\n\n" +
+        "Application ID: " + (application.id || "") + "\n" +
+        "Loan Number: " + (loan && loan.loanNumber ? loan.loanNumber : 1) + "\n" +
+        "Loan Amount: ₹" + Number(loan && loan.amount || application.amount || 0).toLocaleString("en-IN") + "\n" +
+        "Repayment Date: " + (loan && loan.repaymentDate || application.repaymentDate || "") + "\n" +
+        "Status: Pending\n\n" +
+        "Thank you for choosing VD Finance.\n" +
+        "We appreciate your trust in us.\n\n" +
+        "Regards,\nVD Finance\nfinance.vd41@gmail.com";
+
+    sendVDFEmail(application, subject, message, true);
+}
+
+function sendAutomaticStatusEmail(application, loanIndex, status) {
+    if (!application || !application.email) return;
+
+    var history = ensureLoanHistory(application);
+    var loan = history[loanIndex] || history[history.length - 1] || {};
+    var greeting = getVDFTimeGreeting();
+    var customerName = application.name || "Customer";
+    var subject = "VD Finance - Loan " + status;
+    var message =
+        greeting + " " + customerName + ",\n\n" +
+        "Your VD Finance loan status has been updated.\n\n" +
+        "Application ID: " + (application.id || "") + "\n" +
+        "Loan Number: " + (loanIndex + 1) + "\n" +
+        "Loan Amount: ₹" + Number(loan.amount || 0).toLocaleString("en-IN") + "\n" +
+        "Total Payable: ₹" + Number(loan.total || 0).toLocaleString("en-IN") + "\n" +
+        "Status: " + status + "\n" +
+        (loan.repaymentDate ? "Repayment Date: " + loan.repaymentDate + "\n" : "") +
+        "\nThank you for choosing VD Finance.\n" +
+        "We appreciate your trust in us.\n\n" +
+        "Regards,\nVD Finance\nfinance.vd41@gmail.com";
+
+    sendVDFEmail(application, subject, message, true);
+}
+
+function sendAdminEmail(id) {
     if (sessionStorage.getItem("vdfAdmin") !== "true") {
         showPage("login");
         return;
     }
 
     var loans = getLoans();
-    var application = loans.find(function(item) {
-        return item.id === id;
-    });
+    var application = loans.find(function(item) { return item.id === id; });
 
     if (!application) {
         alert("Application not found.");
@@ -3699,27 +3928,24 @@ function sendAdminEmail(id) {
         return;
     }
 
-    var subject = prompt(
-        "Email Subject:",
-        "VD Finance - Application " + application.id
-    );
+    var greeting = getVDFTimeGreeting();
+    var customerName = application.name || "Customer";
+    var defaultSubject = "VD Finance - Application " + application.id;
+    var defaultMessage =
+        greeting + " " + customerName + ",\n\n" +
+        "Your VD Finance application " + application.id + " is currently " + (application.status || "Pending") + ".\n\n" +
+        "Thank you for choosing VD Finance.\n" +
+        "We appreciate your trust in us.\n\n" +
+        "Regards,\nVD Finance\nfinance.vd41@gmail.com";
 
+    var subject = prompt("Email Subject:", defaultSubject);
     if (subject === null) return;
 
-    var message = prompt(
-        "Message to customer:",
-        "Dear " + application.name + ",\n\nYour VD Finance application " + application.id + " is currently " + application.status + ".\n\nRegards,\nVD Finance"
-    );
-
+    var message = prompt("Message to customer:", defaultMessage);
     if (message === null) return;
 
-    var mailto = "mailto:" + encodeURIComponent(application.email)
-        + "?subject=" + encodeURIComponent(subject)
-        + "&body=" + encodeURIComponent(message);
-
-    window.location.href = mailto;
+    sendVDFEmail(application, subject, message, false);
 }
-
 
 /* ================= EDIT APPLICATION ================= */
 
@@ -3789,6 +4015,9 @@ function editApplication(id) {
 
     var email = prompt("Email:", application.email || "");
     if (email === null) return;
+
+    var upiId = prompt("UPI ID:", application.upiId || "");
+    if (upiId === null) return;
 
     var reason = prompt("Reason for Apply:", application.loanReason || "");
     if (reason === null) return;
@@ -3919,6 +4148,7 @@ function editApplication(id) {
     application.mobile = mobile.trim();
     application.coApplicant = coApplicant.trim();
     application.email = email.trim();
+    application.upiId = upiId.trim();
     application.loanReason = reason.trim();
     application.address = address.trim();
     application.adminNote = note.trim();
@@ -4198,6 +4428,9 @@ function changeApplicationStatus(id, loanIndex, newStatus) {
     saveLoans(loans);
     syncToGoogleSheet("update", application);
 
+    /* Automatic customer email for Approved / Rejected. */
+    sendAutomaticStatusEmail(application, loanIndex, newStatus);
+
     loadAdminApplications();
 }
 
@@ -4335,6 +4568,10 @@ function clearLoanAmount(id, loanIndex) {
 
     saveLoans(loans);
     syncToGoogleSheet("update", application);
+
+    /* Automatic customer email for Amount Cleared. */
+    sendAutomaticStatusEmail(application, loanIndex, "Amount Cleared");
+
     loadAdminApplications();
 
     alert("Loan " + (loanIndex + 1) + " marked as Amount Cleared. Other loans remain active.");
@@ -4647,7 +4884,7 @@ window.addEventListener("DOMContentLoaded", function() {
 
     calculateLoan();
 
-    calculateApplication();
+    resetApplicationForm();
 
     if (sessionStorage.getItem("vdfAdmin") === "true") {
         // Admin session remains available in this browser tab.
