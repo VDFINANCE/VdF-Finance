@@ -737,6 +737,12 @@
         border-color: #60a5fa;
     }
 
+    .status.active {
+        background: #dcfce7;
+        color: #15803d;
+        border-color: #4ade80;
+    }
+
     .status.rejected {
         background: #fee2e2;
         color: #dc2626;
@@ -2300,6 +2306,7 @@ input:focus, select:focus, textarea:focus {
                     type="text"
                     id="statusId"
                     placeholder="Example: VDF-123456"
+                    autocomplete="off"
                 >
             </div>
 
@@ -2608,8 +2615,12 @@ function updateHomeGreeting() {
 function updateStatusTimeGreeting(name) {
     var greeting = document.getElementById("statusGreeting");
     if (!greeting) return;
-    var cleanName = name ? escapeHTML(name) : "";
-    greeting.innerHTML = getIndiaTimeGreeting() + (cleanName ? ", " + cleanName + "! 👋 Welcome to VD Finance." : "! 👋 Welcome to VD Finance.");
+    if (!name) {
+        greeting.innerHTML = "";
+        return;
+    }
+    var cleanName = escapeHTML(name);
+    greeting.innerHTML = getIndiaTimeGreeting() + ", " + cleanName + "! 👋 Welcome to VD Finance.";
 }
 
 /* ================= PAGE NAVIGATION ================= */
@@ -2727,14 +2738,20 @@ function calculateLoan() {
 function applyFromCalculator() {
 
     var amount = Number(document.getElementById("calcAmount").value);
+
+    if (!amount || amount < 100 || amount > 50000) {
+        alert("Please enter a loan amount between ₹100 and ₹50,000.");
+        return;
+    }
+
     var period = "30";
+
+    showPage("apply");
 
     document.getElementById("appAmount").value = amount;
     document.getElementById("appPeriod").value = period;
 
     calculateApplication();
-
-    showPage("apply");
 }
 
 
@@ -2777,9 +2794,9 @@ function calculateApplication() {
 /*
   After deploying the Google Apps Script Web App, paste its /exec URL here.
   Example:
-  const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzSLA4hSxo3WC2jegUxBpqwRBRO-2KDH_puv2ZRfIQ5olfVGHDf__4cJq_27dnNqv7TQg/exec";
+  const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx5ovtVbZ4h_j0X3HRZumIUMzh68DweGIu2be0Mg9HXrnzI77bWUGG9XVeXKwWbHoAL/exec";
 */
-const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzSLA4hSxo3WC2jegUxBpqwRBRO-2KDH_puv2ZRfIQ5olfVGHDf__4cJq_27dnNqv7TQg/exec";
+const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx5ovtVbZ4h_j0X3HRZumIUMzh68DweGIu2be0Mg9HXrnzI77bWUGG9XVeXKwWbHoAL/exec";
 
 function syncToGoogleSheet(action, application) {
     if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.indexOf("PASTE_YOUR_") === 0) {
@@ -3075,7 +3092,10 @@ function submitLoan() {
         application.aadhaarFile = reader.result;
 
         saveLoans(loans);
-        syncToGoogleSheet(existingIndex >= 0 && existingApplication ? "update" : "create", application);
+
+        /* Keep a new application in the admin pending queue only.
+           It is NOT written to the Google Sheet until Admin approves it. */
+        syncToGoogleSheet("pending", application);
 
         /* Send the application-received email directly through the Apps Script email API. */
         sendApplicationReceivedEmail(application, transaction);
@@ -3251,7 +3271,13 @@ function getLoanDueText(repaymentDate) {
 }
 
 function getLoanStatusClass(status) {
-    return String(status || "Pending").toLowerCase().replace(/\s+/g, "-");
+    var value = String(status || "Pending").trim().toLowerCase();
+    if (value === "approved") return "active";
+    return value.replace(/\s+/g, "-");
+}
+
+function getLoanStatusDisplay(status) {
+    return String(status || "Pending").trim().toLowerCase() === "approved" ? "Active" : String(status || "Pending");
 }
 
 function showCustomerAdminPopup(note) {
@@ -3347,7 +3373,7 @@ function checkStatus() {
             <div class="loan-history-item">
                 <div class="loan-head">
                     <div class="loan-title">💳 Loan ${index + 1}</div>
-                    <span class="status ${getLoanStatusClass(loan.status)}">${escapeHTML(loan.status || "Pending")}</span>
+                    <span class="status ${getLoanStatusClass(loan.status)}">${escapeHTML(getLoanStatusDisplay(loan.status))}</span>
                 </div>
                 <p><strong>Amount:</strong> ${money(loan.amount)}</p>
                 <p><strong>Interest:</strong> ${money(loan.interest)}</p>
@@ -3361,7 +3387,7 @@ function checkStatus() {
                 </p>
                 <p><strong>Status:</strong>
                     <span class="status ${getLoanStatusClass(loan.status)}">
-                        ${escapeHTML(loan.status || "Pending")}
+                        ${escapeHTML(getLoanStatusDisplay(loan.status))}
                     </span>
                 </p>
             </div>
@@ -3522,10 +3548,29 @@ function adminLogin() {
 
 /* ================= ADMIN APPLICATIONS ================= */
 
-function loadAdminApplications() {
+function loadAdminApplications(skipSheetRefresh) {
 
     if (sessionStorage.getItem("vdfAdmin") !== "true") {
         showPage("login");
+        return;
+    }
+
+    /* Load the shared pending/approved admin queue from Apps Script.
+       Pending applications stay outside the Sheet; approved applications are
+       stored in the Sheet and returned here as part of the same queue. */
+    if (!skipSheetRefresh && GOOGLE_SHEET_WEB_APP_URL) {
+        fetch(GOOGLE_SHEET_WEB_APP_URL + "?action=getApplications&t=" + Date.now())
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                if (data && data.success && Array.isArray(data.applications)) {
+                    saveLoans(data.applications);
+                }
+                loadAdminApplications(true);
+            })
+            .catch(function(error) {
+                console.warn("Admin backend read failed:", error);
+                loadAdminApplications(true);
+            });
         return;
     }
 
@@ -3828,38 +3873,41 @@ function getVDFTimeGreeting() {
     return getIndiaTimeGreeting().replace(/^\S+\s+/, "");
 }
 
+/* ================= EMAIL APPS SCRIPT ================= */
+/* Paste the /exec URL of the Email-only Apps Script here.
+   This is separate from Google Sheets; no Sheet URL is used. */
+const VDF_EMAIL_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx5ovtVbZ4h_j0X3HRZumIUMzh68DweGIu2be0Mg9HXrnzI77bWUGG9XVeXKwWbHoAL/exec";
+
 function sendVDFEmail(application, subject, message, silent) {
     if (!application || !application.email) {
         if (!silent) alert("Customer email address is not available.");
         return Promise.resolve(false);
     }
 
+    if (!VDF_EMAIL_WEB_APP_URL || VDF_EMAIL_WEB_APP_URL.indexOf("PASTE_EMAIL_APPS_SCRIPT") === 0) {
+        if (!silent) alert("Email service URL is not configured yet.");
+        console.warn("VDF email service URL is not configured.");
+        return Promise.resolve(false);
+    }
+
     var payload = {
         action: "sendEmail",
-        application: {
-            id: application.id || "",
-            name: application.name || "Customer",
-            email: application.email || "",
-            subject: subject || "VD Finance - Application Update",
-            message: message || "",
-            amount: Number(application.amount) || 0,
-            total: Number(application.total) || 0,
-            repaymentDate: application.repaymentDate || "",
-            status: application.status || ""
-        }
+        to: application.email,
+        subject: subject || "VD Finance - Application Update",
+        message: message || ""
     };
 
-    return fetch(GOOGLE_SHEET_WEB_APP_URL, {
+    return fetch(VDF_EMAIL_WEB_APP_URL, {
         method: "POST",
         mode: "no-cors",
-        headers: {"Content-Type": "text/plain;charset=utf-8"},
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify(payload)
     }).then(function() {
-        if (!silent) alert("Email sent to " + application.email + ".");
+        if (!silent) alert("Email request sent to " + application.email + ".");
         return true;
     }).catch(function(error) {
-        console.warn("VDF email request failed:", error);
-        if (!silent) alert("Email could not be sent. Please check the Google Apps Script deployment.");
+        console.error("VDF email request failed:", error);
+        if (!silent) alert("Email could not be sent. Please check the Email Apps Script deployment.");
         return false;
     });
 }
@@ -3869,17 +3917,15 @@ function sendApplicationReceivedEmail(application, loan) {
 
     var greeting = getVDFTimeGreeting();
     var customerName = application.name || "Customer";
+    var amount = Number(loan && loan.amount || application.amount || 0);
     var subject = "VD Finance - Application Received " + (application.id || "");
     var message =
         greeting + " " + customerName + ",\n\n" +
-        "We have successfully received your VD Finance loan application.\n\n" +
+        "Thank you for choosing VD Finance.\n\n" +
         "Application ID: " + (application.id || "") + "\n" +
-        "Loan Number: " + (loan && loan.loanNumber ? loan.loanNumber : 1) + "\n" +
-        "Loan Amount: ₹" + Number(loan && loan.amount || application.amount || 0).toLocaleString("en-IN") + "\n" +
-        "Repayment Date: " + (loan && loan.repaymentDate || application.repaymentDate || "") + "\n" +
+        "Applied Amount: ₹" + amount.toLocaleString("en-IN") + "\n" +
         "Status: Pending\n\n" +
-        "Thank you for choosing VD Finance.\n" +
-        "We appreciate your trust in us.\n\n" +
+        "Your loan application has been successfully received and is currently under review.\n\n" +
         "Regards,\nVD Finance\nfinance.vd41@gmail.com";
 
     sendVDFEmail(application, subject, message, true);
@@ -3892,19 +3938,55 @@ function sendAutomaticStatusEmail(application, loanIndex, status) {
     var loan = history[loanIndex] || history[history.length - 1] || {};
     var greeting = getVDFTimeGreeting();
     var customerName = application.name || "Customer";
-    var subject = "VD Finance - Loan " + status;
-    var message =
-        greeting + " " + customerName + ",\n\n" +
-        "Your VD Finance loan status has been updated.\n\n" +
-        "Application ID: " + (application.id || "") + "\n" +
-        "Loan Number: " + (loanIndex + 1) + "\n" +
-        "Loan Amount: ₹" + Number(loan.amount || 0).toLocaleString("en-IN") + "\n" +
-        "Total Payable: ₹" + Number(loan.total || 0).toLocaleString("en-IN") + "\n" +
-        "Status: " + status + "\n" +
-        (loan.repaymentDate ? "Repayment Date: " + loan.repaymentDate + "\n" : "") +
-        "\nThank you for choosing VD Finance.\n" +
-        "We appreciate your trust in us.\n\n" +
-        "Regards,\nVD Finance\nfinance.vd41@gmail.com";
+    var amount = Number(loan.amount || 0);
+    var total = Number(loan.total || 0);
+    var subject;
+    var message;
+
+    if (String(status).toLowerCase() === "approved") {
+        subject = "VD Finance - Loan Approved";
+        message =
+            greeting + " " + customerName + ",\n\n" +
+            "Your VD Finance loan application has been approved.\n\n" +
+            "Application ID: " + (application.id || "") + "\n" +
+            "Loan Amount: ₹" + amount.toLocaleString("en-IN") + "\n" +
+            "Total Payable: ₹" + total.toLocaleString("en-IN") + "\n" +
+            "Due Date: " + (loan.repaymentDate || "") + "\n" +
+            "Status: Approved\n\n" +
+            "Please make the repayment on or before the due date.\n\n" +
+            "Thank you for choosing VD Finance.\n\n" +
+            "Regards,\nVD Finance\nfinance.vd41@gmail.com";
+    } else if (String(status).toLowerCase() === "rejected") {
+        subject = "VD Finance - Loan Application Update";
+        message =
+            greeting + " " + customerName + ",\n\n" +
+            "Your VD Finance loan application has been reviewed.\n\n" +
+            "Application ID: " + (application.id || "") + "\n" +
+            "Applied Amount: ₹" + amount.toLocaleString("en-IN") + "\n" +
+            "Status: Rejected\n\n" +
+            "Your application has not been approved at this time.\n\n" +
+            "Thank you,\nVD Finance\nfinance.vd41@gmail.com";
+    } else if (String(status).toLowerCase() === "amount cleared" || String(status).toLowerCase() === "cleared") {
+        subject = "VD Finance - Loan Cleared";
+        message =
+            greeting + " " + customerName + ",\n\n" +
+            "Your loan repayment has been successfully cleared.\n\n" +
+            "Application ID: " + (application.id || "") + "\n" +
+            "Loan Amount: ₹" + amount.toLocaleString("en-IN") + "\n" +
+            "Amount Cleared: ₹" + total.toLocaleString("en-IN") + "\n" +
+            "Status: Amount Cleared\n\n" +
+            "Thank you for choosing VD Finance.\n" +
+            "We appreciate your trust in us.\n\n" +
+            "Regards,\nVD Finance\nfinance.vd41@gmail.com";
+    } else {
+        subject = "VD Finance - Loan " + status;
+        message =
+            greeting + " " + customerName + ",\n\n" +
+            "Application ID: " + (application.id || "") + "\n" +
+            "Loan Amount: ₹" + amount.toLocaleString("en-IN") + "\n" +
+            "Status: " + status + "\n\n" +
+            "Regards,\nVD Finance\nfinance.vd41@gmail.com";
+    }
 
     sendVDFEmail(application, subject, message, true);
 }
@@ -4349,11 +4431,21 @@ function updateAdminMonthlyDashboard() {
                 String(date.getMonth() + 1).padStart(2, "0");
 
             if (key === selectedMonth && loan.status !== "Rejected") {
-                totalAmount += Number(loan.amount) || 0;
+                var loanStatus = String(loan.status || "").trim().toLowerCase();
+
+                /* Dashboard Loan Amount: count only loans that are approved/active or cleared. */
+                if (loanStatus === "approved" || loanStatus === "amount cleared" || loanStatus === "cleared") {
+                    totalAmount += Number(loan.amount) || 0;
+                }
+
                 totalInterest += Number(loan.interest) || 0;
                 totalFee += Number(loan.fee) || 0;
                 totalPayable += Number(loan.total) || 0;
-                totalProfit += (Number(loan.interest) || 0) + (Number(loan.fee) || 0);
+
+                /* Profit is shown only after the loan amount is cleared. */
+                if (loanStatus === "amount cleared" || loanStatus === "cleared") {
+                    totalProfit += (Number(loan.interest) || 0) + (Number(loan.fee) || 0);
+                }
             }
         });
     });
@@ -4363,7 +4455,31 @@ function updateAdminMonthlyDashboard() {
     if (overrides.interest !== undefined) totalInterest = Number(overrides.interest) || 0;
     if (overrides.fee !== undefined) totalFee = Number(overrides.fee) || 0;
     if (overrides.total !== undefined) totalPayable = Number(overrides.total) || 0;
-    if (overrides.profit !== undefined) totalProfit = Number(overrides.profit) || 0;
+
+    /* Manual profit value is allowed only when at least one loan is Amount Cleared. */
+    var hasClearedLoan = loans.some(function(application) {
+        return ensureLoanHistory(application).some(function(loan) {
+            var status = String(loan.status || "").trim().toLowerCase();
+            var date = new Date(loan.createdAt);
+            if (isNaN(date.getTime()) && loan.createdAt) {
+                var match = String(loan.createdAt).match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+                if (match) {
+                    date = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+                }
+            }
+            if (isNaN(date.getTime())) return false;
+
+            var loanMonth = date.getFullYear() + "-" +
+                String(date.getMonth() + 1).padStart(2, "0");
+
+            return loanMonth === selectedMonth &&
+                (status === "amount cleared" || status === "cleared");
+        });
+    });
+
+    if (hasClearedLoan && overrides.profit !== undefined) {
+        totalProfit = Number(overrides.profit) || 0;
+    }
 
     document.getElementById("monthlyLoanAmount").textContent = money(totalAmount);
     document.getElementById("monthlyInterest").textContent = money(totalInterest);
@@ -4431,7 +4547,8 @@ function changeApplicationStatus(id, loanIndex, newStatus) {
     /* Automatic customer email for Approved / Rejected. */
     sendAutomaticStatusEmail(application, loanIndex, newStatus);
 
-    loadAdminApplications();
+    /* Keep the just-applied status visible immediately; do not re-read the sheet before the update finishes. */
+    loadAdminApplications(true);
 }
 
 
@@ -4572,7 +4689,7 @@ function clearLoanAmount(id, loanIndex) {
     /* Automatic customer email for Amount Cleared. */
     sendAutomaticStatusEmail(application, loanIndex, "Amount Cleared");
 
-    loadAdminApplications();
+    loadAdminApplications(true);
 
     alert("Loan " + (loanIndex + 1) + " marked as Amount Cleared. Other loans remain active.");
 }
@@ -4654,7 +4771,7 @@ function deleteLoanTransaction(id, loanIndex) {
         loans.splice(index, 1);
         saveLoans(loans);
         syncToGoogleSheet("delete", application);
-        loadAdminApplications();
+        loadAdminApplications(true);
         return;
     }
 
@@ -4674,7 +4791,7 @@ function deleteLoanTransaction(id, loanIndex) {
 
     saveLoans(loans);
     syncToGoogleSheet("update", application);
-    loadAdminApplications();
+    loadAdminApplications(true);
 
     alert("Loan " + (loanIndex + 1) + " deleted successfully.");
 }
@@ -4719,7 +4836,7 @@ function deleteClearedApplication(id) {
     loans.splice(index, 1);
     saveLoans(loans);
     syncToGoogleSheet("delete", application);
-    loadAdminApplications();
+    loadAdminApplications(true);
 }
 
 
